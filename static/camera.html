@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Plant Inspector</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --ok: #3dd68c;
+      --warn: #ff6b6b;
+      --accent: #5b9cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      -webkit-tap-highlight-color: transparent;
+    }
+    header {
+      padding: 12px 16px;
+      text-align: center;
+      font-weight: 600;
+      border-bottom: 1px solid #243044;
+    }
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 12px;
+      max-width: 520px;
+      margin: 0 auto;
+      width: 100%;
+    }
+    .preview-wrap {
+      position: relative;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #111;
+      aspect-ratio: 4/3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .preview-wrap.empty::after {
+      content: "No photo yet";
+      color: var(--muted);
+      font-size: 0.95rem;
+      z-index: 0;
+    }
+    video, #preview, img.result {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    #preview, video {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+    }
+    #preview { display: none; }
+    img.result {
+      position: absolute;
+      inset: 0;
+      display: none;
+      z-index: 2;
+    }
+    .status {
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: var(--card);
+      font-size: 0.95rem;
+      line-height: 1.4;
+    }
+    .status.ok { border-left: 4px solid var(--ok); }
+    .status.warn { border-left: 4px solid var(--warn); }
+    .status.idle { border-left: 4px solid var(--muted); }
+    .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .controls.busy {
+      opacity: 0.55;
+      pointer-events: none;
+    }
+    .btn {
+      display: block;
+      width: 100%;
+      border: none;
+      border-radius: 10px;
+      padding: 16px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+      line-height: 1.2;
+      touch-action: manipulation;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    .btn.primary { background: var(--accent); color: #fff; }
+    .btn.secondary { background: #2a3649; color: var(--text); }
+    label.row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+    .hint {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.45;
+    }
+    .hint code { word-break: break-all; }
+    .mode-badge {
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-align: center;
+    }
+    canvas { display: none; }
+    /* Must NOT use display:none — iOS Safari ignores programmatic & label taps */
+    .file-input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+      opacity: 0.01;
+    }
+    .live-only,
+    .photo-only { display: none; }
+    body.mode-live .live-only,
+    body.mode-photo .photo-only { display: block; }
+    body.mode-live label.live-only.row { display: flex; }
+    .https-banner {
+      display: none;
+      padding: 12px 14px;
+      background: #2a2218;
+      border-bottom: 1px solid #5c4a2a;
+      font-size: 0.88rem;
+      line-height: 1.45;
+    }
+    .https-banner.visible { display: block; }
+    .https-banner a {
+      color: var(--accent);
+      font-weight: 600;
+      word-break: break-all;
+    }
+    .https-banner button {
+      margin-top: 8px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: none;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+    }
+    #modelLine {
+      font-size: 0.75rem;
+      color: var(--muted);
+      text-align: center;
+    }
+  </style>
+</head>
+<body class="mode-photo">
+  <header>Plant / Weed Inspector</header>
+  <div id="httpsBanner" class="https-banner">
+    <strong>Live camera needs HTTPS.</strong> Photo upload works on http://.
+    Open on your phone:
+    <a id="httpsLink" href="#"></a>
+    <button type="button" id="copyHttpsBtn">Copy HTTPS link</button>
+    <br /><small>Run on laptop: <code>./scripts/run_https.sh</code> then accept the cert warning once.</small>
+  </div>
+  <main>
+    <p id="modelLine"></p>
+    <p id="modeBadge" class="mode-badge"></p>
+
+    <div id="previewWrap" class="preview-wrap empty">
+      <video id="video" class="live-only" playsinline autoplay muted></video>
+      <img id="preview" alt="Captured photo" />
+      <img id="result" class="result" alt="Detection result" />
+    </div>
+
+    <div id="status" class="status idle">Loading…</div>
+
+  <!-- File inputs live in main (not inside display:none parents) -->
+  <input id="cameraInput" class="file-input" type="file" accept="image/*" capture="environment" />
+  <input id="galleryInput" class="file-input" type="file" accept="image/*" />
+
+    <div id="controls" class="controls">
+      <div class="photo-only">
+        <!-- Native label tap — reliable on iOS/Android (no .click()) -->
+        <label for="cameraInput" class="btn primary" id="cameraLabel">
+          Take photo &amp; scan
+        </label>
+        <label for="galleryInput" class="btn secondary" id="galleryLabel">
+          Choose from gallery
+        </label>
+        <label for="cameraInput" class="btn secondary" id="retakeLabel" hidden>
+          Retake photo
+        </label>
+        <button type="button" id="rescanBtn" class="btn secondary" hidden disabled>
+          Scan again
+        </button>
+      </div>
+
+      <button type="button" id="scanBtn" class="btn primary live-only" disabled>Scan now</button>
+
+      <label class="row live-only">
+        <input type="checkbox" id="autoScan" />
+        Auto-scan every 2 seconds
+      </label>
+
+      <button type="button" id="switchBtn" class="btn secondary live-only" disabled>Switch camera</button>
+      <button type="button" id="hideResultBtn" class="btn secondary" disabled>Hide boxes</button>
+    </div>
+
+    <p class="hint">
+      Open <code id="origin"></code> on the same Wi‑Fi.<br />
+      <span id="httpsHint"></span><br />
+      <span id="browserHint"></span>
+    </p>
+  </main>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const video = document.getElementById("video");
+    const preview = document.getElementById("preview");
+    const previewWrap = document.getElementById("previewWrap");
+    const controls = document.getElementById("controls");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
+    const scanBtn = document.getElementById("scanBtn");
+    const rescanBtn = document.getElementById("rescanBtn");
+    const retakeLabel = document.getElementById("retakeLabel");
+    const cameraLabel = document.getElementById("cameraLabel");
+    const galleryLabel = document.getElementById("galleryLabel");
+    const switchBtn = document.getElementById("switchBtn");
+    const hideResultBtn = document.getElementById("hideResultBtn");
+    const resultImg = document.getElementById("result");
+    const autoScan = document.getElementById("autoScan");
+    const cameraInput = document.getElementById("cameraInput");
+    const galleryInput = document.getElementById("galleryInput");
+    const modeBadge = document.getElementById("modeBadge");
+    const httpsHint = document.getElementById("httpsHint");
+    const browserHint = document.getElementById("browserHint");
+    const httpsBanner = document.getElementById("httpsBanner");
+    const httpsLink = document.getElementById("httpsLink");
+    const copyHttpsBtn = document.getElementById("copyHttpsBtn");
+    const modelLine = document.getElementById("modelLine");
+    document.getElementById("origin").textContent = window.location.origin;
+
+    const httpsUrl = window.location.href.replace(/^http:/i, "https:");
+    httpsLink.href = httpsUrl;
+    httpsLink.textContent = httpsUrl;
+    copyHttpsBtn.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(httpsUrl);
+        copyHttpsBtn.textContent = "Copied!";
+        setTimeout(() => { copyHttpsBtn.textContent = "Copy HTTPS link"; }, 2000);
+      } catch (_) {
+        prompt("Copy this URL:", httpsUrl);
+      }
+    });
+
+    let stream = null;
+    let facingMode = "environment";
+    let scanning = false;
+    let autoTimer = null;
+    let lastPhotoBlob = null;
+    let mode = "photo";
+
+    const inAppBrowser = /FBAN|FBAV|Instagram|Line\/|Twitter|Snapchat|wv\)/i.test(
+      navigator.userAgent
+    );
+    if (inAppBrowser) {
+      browserHint.textContent =
+        "Tip: open this page in Safari or Chrome (in-app browsers often block the camera picker).";
+    }
+
+    function setStatus(text, kind = "idle") {
+      statusEl.textContent = text;
+      statusEl.className = "status " + kind;
+    }
+
+    function setBusy(busy) {
+      scanning = busy;
+      controls.classList.toggle("busy", busy);
+    }
+
+    function showPhotoActions(hasPhoto) {
+      cameraLabel.hidden = hasPhoto;
+      galleryLabel.hidden = hasPhoto;
+      retakeLabel.hidden = !hasPhoto;
+      rescanBtn.hidden = !hasPhoto;
+      rescanBtn.disabled = !hasPhoto;
+    }
+
+    function canUseLiveCamera() {
+      return (
+        window.isSecureContext &&
+        navigator.mediaDevices &&
+        typeof navigator.mediaDevices.getUserMedia === "function"
+      );
+    }
+
+    function setMode(next) {
+      mode = next;
+      document.body.className = "mode-" + next;
+      modeBadge.textContent =
+        next === "live"
+          ? "Live camera (HTTPS)"
+          : "Photo mode — tap a blue button below";
+    }
+
+    async function getUserMediaPolyfill(constraints) {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        return navigator.mediaDevices.getUserMedia(constraints);
+      }
+      const legacy =
+        navigator.getUserMedia ||
+        navigator.webkitGetUserMedia ||
+        navigator.mozGetUserMedia;
+      if (!legacy) {
+        throw new Error("Live camera unavailable on this connection.");
+      }
+      return new Promise((resolve, reject) => {
+        legacy.call(navigator, constraints, resolve, reject);
+      });
+    }
+
+    async function startCamera() {
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+      stream = await getUserMediaPolyfill({
+        video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false,
+      });
+      video.srcObject = stream;
+      scanBtn.disabled = false;
+      switchBtn.disabled = false;
+      setStatus("Live camera ready. Tap Scan now.", "idle");
+    }
+
+    function showPreviewFromFile(file) {
+      const url = URL.createObjectURL(file);
+      preview.onload = () => URL.revokeObjectURL(url);
+      preview.src = url;
+      preview.style.display = "block";
+      previewWrap.classList.remove("empty");
+      showPhotoActions(true);
+    }
+
+    async function detectBlob(blob) {
+      setBusy(true);
+      setStatus("Analyzing…", "idle");
+
+      const form = new FormData();
+      form.append("file", blob, "frame.jpg");
+
+      try {
+        const res = await fetch("/api/v1/detect", { method: "POST", body: form });
+        let data = {};
+        try {
+          data = await res.json();
+        } catch (_) {
+          data = {};
+        }
+        if (!res.ok) {
+          const detail = data.detail;
+          const msg = Array.isArray(detail)
+            ? detail.map((d) => (d && d.msg) || d).join(", ")
+            : detail || "Server error " + res.status;
+          throw new Error(msg);
+        }
+
+        const kind = data.issue_found ? "warn" : "ok";
+        let msg = data.message;
+        if (data.detections && data.detections.length) {
+          const top = data.detections
+            .filter((d) => d.is_issue)
+            .slice(0, 2)
+            .map((d) => d.class_name.replace(/___/g, " ") + " " + Math.round(d.confidence * 100) + "%");
+          if (top.length) msg += " [" + top.join(", ") + "]";
+        }
+        setStatus(msg, kind);
+
+        if (data.annotated_image_base64) {
+          resultImg.src = "data:image/jpeg;base64," + data.annotated_image_base64;
+          resultImg.style.display = "block";
+          hideResultBtn.disabled = false;
+        }
+      } catch (err) {
+        setStatus("Error: " + err.message, "warn");
+      } finally {
+        setBusy(false);
+        rescanBtn.disabled = !lastPhotoBlob;
+      }
+    }
+
+    async function handleFile(file) {
+      if (!file) return;
+      if (!file.type || !file.type.startsWith("image/")) {
+        setStatus("Please pick an image file.", "warn");
+        return;
+      }
+      lastPhotoBlob = file;
+      resultImg.style.display = "none";
+      showPreviewFromFile(file);
+      await detectBlob(file);
+    }
+
+    function onFileInputChange(event) {
+      const input = event.target;
+      const file = input.files && input.files[0];
+      input.value = "";
+      handleFile(file);
+    }
+
+    cameraInput.addEventListener("change", onFileInputChange);
+    galleryInput.addEventListener("change", onFileInputChange);
+
+    cameraLabel.addEventListener("click", () => {
+      setStatus("Opening camera…", "idle");
+    });
+    galleryLabel.addEventListener("click", () => {
+      setStatus("Opening gallery…", "idle");
+    });
+    retakeLabel.addEventListener("click", () => {
+      resultImg.style.display = "none";
+      setStatus("Opening camera…", "idle");
+    });
+
+    rescanBtn.addEventListener("click", () => {
+      if (lastPhotoBlob) detectBlob(lastPhotoBlob);
+    });
+
+    async function scanFromVideo() {
+      if (scanning || !video.videoWidth) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0);
+      const blob = await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/jpeg", 0.85)
+      );
+      await detectBlob(blob);
+    }
+
+    scanBtn.addEventListener("click", scanFromVideo);
+
+    switchBtn.addEventListener("click", async () => {
+      facingMode = facingMode === "environment" ? "user" : "environment";
+      try {
+        await startCamera();
+      } catch (err) {
+        setStatus(err.message, "warn");
+      }
+    });
+
+    hideResultBtn.addEventListener("click", () => {
+      resultImg.style.display = "none";
+    });
+
+    autoScan.addEventListener("change", () => {
+      clearInterval(autoTimer);
+      autoTimer = null;
+      if (autoScan.checked) {
+        autoTimer = setInterval(scanFromVideo, 2000);
+      }
+    });
+
+    async function init() {
+      showPhotoActions(false);
+
+      try {
+        const infoRes = await fetch("/api/v1/model-info");
+        if (infoRes.ok) {
+          const info = await infoRes.json();
+          modelLine.textContent =
+            "AI: " + info.model_preset + " (" + info.class_count + " classes)";
+        }
+      } catch (_) {
+        modelLine.textContent = "";
+      }
+
+      if (!window.isSecureContext) {
+        httpsBanner.classList.add("visible");
+        httpsHint.textContent =
+          "http:// — use photo buttons below, or HTTPS link above for live camera.";
+      } else {
+        httpsHint.textContent = "HTTPS — live camera enabled.";
+      }
+
+      if (canUseLiveCamera()) {
+        setMode("live");
+        try {
+          await startCamera();
+          return;
+        } catch (err) {
+          console.warn("Live camera failed:", err);
+        }
+      }
+
+      setMode("photo");
+      setStatus("Tap Take photo & scan (or Choose from gallery).", "idle");
+    }
+
+    init();
+  </script>
+</body>
+</html>
