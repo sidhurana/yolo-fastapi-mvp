@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     app_name: str = "YOLO Plant Inspector"
     cors_origins: str = "*"
 
+    database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/plant_inspector"
+    store_event_images: bool = True
+    uploads_dir: str = "uploads"
+
     @model_validator(mode="before")
     @classmethod
     def apply_model_preset(cls, data: Any) -> Any:

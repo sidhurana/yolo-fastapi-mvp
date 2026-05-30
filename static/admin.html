@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Detection Admin</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --border: #2a3649;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --ok: #3dd68c;
+      --warn: #ff6b6b;
+      --accent: #5b9cff;
+      --high: #ff6b6b;
+      --med: #ffb347;
+      --low: #3dd68c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    header h1 { margin: 0; font-size: 1.2rem; }
+    header a { color: var(--accent); text-decoration: none; font-size: 0.9rem; }
+    main { padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .stat {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 14px;
+      border: 1px solid var(--border);
+    }
+    .stat .label { color: var(--muted); font-size: 0.8rem; }
+    .stat .value { font-size: 1.6rem; font-weight: 700; margin-top: 4px; }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    select, button {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border-radius: 10px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    th, td {
+      padding: 10px 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.88rem;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    tr:hover { background: #222c3d; cursor: pointer; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge.issue { background: rgba(255,107,107,0.2); color: var(--warn); }
+    .badge.ok { background: rgba(61,214,140,0.2); color: var(--ok); }
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    @media (min-width: 960px) {
+      .layout.has-detail { grid-template-columns: 1.2fr 1fr; }
+    }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .panel h2 { margin: 0 0 12px; font-size: 1rem; }
+    .panel img {
+      width: 100%;
+      border-radius: 8px;
+      background: #000;
+      max-height: 360px;
+      object-fit: contain;
+    }
+    .advisory {
+      border-left: 3px solid var(--accent);
+      padding: 10px 12px;
+      margin: 10px 0;
+      background: #141c28;
+      border-radius: 0 8px 8px 0;
+    }
+    .advisory.high { border-left-color: var(--high); }
+    .advisory.medium { border-left-color: var(--med); }
+    .advisory.low { border-left-color: var(--low); }
+    .advisory h4 { margin: 0 0 6px; font-size: 0.95rem; }
+    .advisory p { margin: 4px 0; color: var(--muted); font-size: 0.85rem; line-height: 1.4; }
+    .advisory strong { color: var(--text); }
+    .det-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+    }
+    .empty { color: var(--muted); text-align: center; padding: 40px; }
+    .pager { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+    #detailPanel { display: none; }
+    #detailPanel.visible { display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Plant Inspector — Admin</h1>
+    <div>
+      <a href="/">← Camera</a>
+      &nbsp;·&nbsp;
+      <a href="/docs">API docs</a>
+    </div>
+  </header>
+
+  <main>
+    <div class="stats" id="stats"></div>
+
+    <div class="toolbar">
+      <label>
+        Filter:
+        <select id="filter">
+          <option value="">All scans</option>
+          <option value="true">Issues only</option>
+          <option value="false">Clear only</option>
+        </select>
+      </label>
+      <button type="button" class="primary" id="refreshBtn">Refresh</button>
+    </div>
+
+    <div class="layout" id="layout">
+      <div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Time</th>
+              <th>Status</th>
+              <th>Detections</th>
+              <th>Issues matched</th>
+              <th>ms</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div class="pager">
+          <button type="button" id="prevBtn">← Prev</button>
+          <span id="pageInfo"></span>
+          <button type="button" id="nextBtn">Next →</button>
+        </div>
+      </div>
+
+      <div class="panel" id="detailPanel">
+        <h2>Event #<span id="detailId"></span></h2>
+        <p id="detailMeta" style="color:var(--muted);font-size:0.85rem;"></p>
+        <img id="detailImg" alt="Annotated scan" hidden />
+        <div id="detailSummary" class="advisory medium" style="margin-top:12px;"></div>
+        <h3 style="font-size:0.95rem;margin:16px 0 8px;">YOLO notes &amp; suggestions</h3>
+        <div id="detailAdvisories"></div>
+        <h3 style="font-size:0.95rem;margin:16px 0 8px;">Raw detections</h3>
+        <div id="detailDetections"></div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    let skip = 0;
+    const limit = 25;
+    let total = 0;
+    let selectedId = null;
+
+    function fmtTime(iso) {
+      return new Date(iso).toLocaleString();
+    }
+
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    async function loadStats() {
+      const res = await fetch("/api/v1/admin/stats");
+      const s = await res.json();
+      document.getElementById("stats").innerHTML = `
+        <div class="stat"><div class="label">Total scans</div><div class="value">${s.total_events}</div></div>
+        <div class="stat"><div class="label">Issues found</div><div class="value" style="color:var(--warn)">${s.issues_found}</div></div>
+        <div class="stat"><div class="label">Clear scans</div><div class="value" style="color:var(--ok)">${s.clear_scans}</div></div>
+        <div class="stat"><div class="label">Avg inference</div><div class="value">${s.avg_inference_ms}<span style="font-size:0.9rem"> ms</span></div></div>
+      `;
+    }
+
+    async function loadEvents() {
+      const filter = document.getElementById("filter").value;
+      let url = `/api/v1/admin/events?skip=${skip}&limit=${limit}`;
+      if (filter !== "") url += `&issue_only=${filter}`;
+
+      const res = await fetch(url);
+      const data = await res.json();
+      total = data.total;
+      const tbody = document.getElementById("tbody");
+
+      if (!data.items.length) {
+        tbody.innerHTML = `<tr><td colspan="6" class="empty">No detection events yet. Run a scan from the camera page.</td></tr>`;
+      } else {
+        tbody.innerHTML = data.items.map((e) => `
+          <tr data-id="${e.id}">
+            <td>${e.id}</td>
+            <td>${fmtTime(e.created_at)}</td>
+            <td><span class="badge ${e.issue_found ? "issue" : "ok"}">${e.issue_found ? "Issue" : "Clear"}</span></td>
+            <td>${e.detection_count}</td>
+            <td>${esc((e.issue_classes_matched || []).slice(0, 2).join(", ") || "—")}</td>
+            <td>${Math.round(e.inference_ms)}</td>
+          </tr>
+        `).join("");
+
+        tbody.querySelectorAll("tr[data-id]").forEach((row) => {
+          row.addEventListener("click", () => loadDetail(Number(row.dataset.id)));
+        });
+      }
+
+      document.getElementById("pageInfo").textContent =
+        `${skip + 1}–${Math.min(skip + limit, total)} of ${total}`;
+      document.getElementById("prevBtn").disabled = skip === 0;
+      document.getElementById("nextBtn").disabled = skip + limit >= total;
+    }
+
+    async function loadDetail(id) {
+      selectedId = id;
+      const res = await fetch(`/api/v1/admin/events/${id}`);
+      const e = await res.json();
+      const panel = document.getElementById("detailPanel");
+      panel.classList.add("visible");
+      document.getElementById("layout").classList.add("has-detail");
+
+      document.getElementById("detailId").textContent = e.id;
+      document.getElementById("detailMeta").textContent =
+        `${fmtTime(e.created_at)} · ${e.model_preset} · ${e.detection_count} detection(s)`;
+
+      const img = document.getElementById("detailImg");
+      if (e.annotated_image_url) {
+        img.src = e.annotated_image_url;
+        img.hidden = false;
+      } else {
+        img.hidden = true;
+      }
+
+      const sum = document.getElementById("detailSummary");
+      sum.innerHTML = `<h4>Summary suggestion</h4><p>${esc(e.summary_suggestion || e.message)}</p>`;
+
+      const adv = document.getElementById("detailAdvisories");
+      if (e.advisories && e.advisories.length) {
+        adv.innerHTML = e.advisories.map((a) => `
+          <div class="advisory ${a.severity}">
+            <h4>${esc(a.display_name)} <small>(${a.severity})</small></h4>
+            <p><strong>Note:</strong> ${esc(a.note)}</p>
+            <p><strong>Suggestion:</strong> ${esc(a.suggestion)}</p>
+          </div>
+        `).join("");
+      } else {
+        adv.innerHTML = `<p class="empty" style="padding:12px">No advisory generated for this scan.</p>`;
+      }
+
+      const det = document.getElementById("detailDetections");
+      if (e.detections && e.detections.length) {
+        det.innerHTML = e.detections.map((d) => `
+          <div class="det-row">
+            <span>${esc(d.class_name.replace(/___/g, " "))}${d.is_issue ? " ⚠" : ""}</span>
+            <span>${Math.round(d.confidence * 100)}%</span>
+          </div>
+        `).join("");
+      } else {
+        det.innerHTML = `<p class="empty" style="padding:12px">No objects detected.</p>`;
+      }
+    }
+
+    document.getElementById("filter").addEventListener("change", () => { skip = 0; loadEvents(); });
+    document.getElementById("refreshBtn").addEventListener("click", () => { loadStats(); loadEvents(); });
+    document.getElementById("prevBtn").addEventListener("click", () => { skip = Math.max(0, skip - limit); loadEvents(); });
+    document.getElementById("nextBtn").addEventListener("click", () => { skip += limit; loadEvents(); });
+
+    loadStats();
+    loadEvents();
+  </script>
+</body>
+</html>

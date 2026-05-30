@@ -1,0 +1,17 @@
+[Unit]
+Description=YOLO Plant Inspector API
+After=network.target docker.service
+Wants=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/yolo-fastapi-mvp
+EnvironmentFile=/opt/yolo-fastapi-mvp/.env
+ExecStart=/opt/yolo-fastapi-mvp/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

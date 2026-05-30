@@ -8,6 +8,6 @@ __pycache__/
 .ruff_cache/
 *.pt
 runs/
-uploads/
+uploads/events/
 .certs/
 .DS_Store

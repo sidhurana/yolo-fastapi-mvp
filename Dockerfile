@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY static ./static
 COPY .env.example .env
+RUN mkdir -p uploads/events weights
 
 EXPOSE 8000
 

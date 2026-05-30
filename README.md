@@ -15,7 +15,9 @@ Built with **FastAPI**, **Ultralytics YOLO**, and a mobile-first HTML camera pag
 - [AI models](#ai-models)
 - [Issue detection logic](#issue-detection-logic)
 - [Phone camera modes](#phone-camera-modes)
-- [Quick start](#quick-start)
+- [PostgreSQL & admin panel](#postgresql--admin-panel)
+- [Quick start (local)](#quick-start-local)
+- [Install on VM / EC2](#install-on-vm--ec2)
 - [Configuration](#configuration)
 - [API reference](#api-reference)
 - [Project structure](#project-structure)
@@ -342,18 +344,90 @@ The UI shows a yellow banner on HTTP with a copyable HTTPS link.
 
 ---
 
-## Quick start
+## PostgreSQL & admin panel
+
+Every call to `POST /api/v1/detect` is **persisted in PostgreSQL** with:
+
+- detection results (classes, confidence, bounding boxes)
+- issue flags and matched disease names
+- **YOLO advisory notes & treatment suggestions** per class
+- annotated scan image (saved under `uploads/events/`)
+- inference time, model preset, client IP
+
+### Admin UI
+
+Open **`http://localhost:8000/admin`** to:
+
+- view stats (total scans, issues found, avg inference ms)
+- browse all detection events (filter by issue / clear)
+- click an event to see annotated image, advisories, and raw detections
+
+### Database schema
+
+Table `detection_events`:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | serial | Primary key (returned as `event_id` in detect API) |
+| `created_at` | timestamptz | Scan timestamp |
+| `issue_found` | boolean | Whether disease keywords matched |
+| `message` | text | Short status from detector |
+| `summary_suggestion` | text | Overall actionable advice |
+| `detections` | jsonb | Full YOLO box list |
+| `advisories` | jsonb | Per-class notes + suggestions |
+| `annotated_image_path` | text | Path to JPEG with boxes |
+| `model_preset`, `inference_ms`, … | | Model metadata |
+
+Tables are created automatically on startup (`Base.metadata.create_all`).
+
+### Start PostgreSQL
+
+**Option A — Docker Compose (API + Postgres):**
+
+```bash
+docker compose up --build
+```
+
+**Option B — Postgres only:**
+
+```bash
+docker compose up db -d
+# set DATABASE_URL in .env, then:
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+**Option C — local Postgres:**
+
+```bash
+createdb plant_inspector
+# DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/plant_inspector
+```
+
+### Admin API
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/v1/admin/stats` | Aggregate counts |
+| `GET /api/v1/admin/events?skip=0&limit=50&issue_only=true` | Paginated event list |
+| `GET /api/v1/admin/events/{id}` | Single event detail |
+
+Detect responses now include `event_id`, `summary_suggestion`, and `advisories[]`.
+
+---
+
+## Quick start (local)
 
 ### Prerequisites
 
 - Python 3.9+
-- Same Wi‑Fi network for phone + laptop
+- PostgreSQL (or Docker for `docker compose up db`)
+- Same Wi‑Fi network for phone + server
 - ~500 MB disk space for plant model weights
 
 ### Install and run
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/sidhurana/yolo-fastapi-mvp.git
 cd yolo-fastapi-mvp
 
 python3 -m venv .venv
@@ -361,28 +435,179 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
 cp .env.example .env
+python scripts/setup_db.py         # creates DB + tables (auto on startup too)
 
-# Optional but recommended: download model before first request
+docker compose up db -d            # or use local Postgres
+
 python scripts/download_model.py --preset plant_disease
 
-# HTTP — photo mode on phone
 uvicorn app.main:app --host 0.0.0.0 --port 8000
-
-# HTTPS — live camera on phone
-./scripts/run_https.sh
 ```
 
-Find your laptop IP:
+Or one-shot install script (Ubuntu):
+
+```bash
+git clone https://github.com/sidhurana/yolo-fastapi-mvp.git
+cd yolo-fastapi-mvp
+chmod +x scripts/install.sh
+./scripts/install.sh
+source .venv/bin/activate && uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Find your server IP:
 
 ```bash
 # macOS
 ipconfig getifaddr en0
 
-# Linux
-hostname -I | awk '{print $1}'
+# Linux / EC2
+curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || hostname -I | awk '{print $1}'
 ```
 
-Open that IP on your phone in Safari or Chrome (not in-app browsers like Instagram).
+Open on your phone in Safari or Chrome:
+
+- **Camera:** `http://<SERVER_IP>:8000`
+- **Admin:** `http://<SERVER_IP>:8000/admin`
+
+HTTPS live camera: `./scripts/run_https.sh`
+
+---
+
+## Install on VM / EC2
+
+Full guide for a **fresh Ubuntu 22.04/24.04** server (AWS EC2, DigitalOcean, GCP, etc.).
+
+### 1. Launch the instance
+
+| Setting | Recommendation |
+|---------|----------------|
+| OS | Ubuntu 22.04 or 24.04 LTS |
+| Instance type | `t3.small` minimum (2 GB RAM); `t3.medium`+ for faster inference |
+| Storage | 20 GB+ (model ~500 MB + uploads) |
+| Security group | Inbound **22** (SSH), **8000** (HTTP API/UI) |
+
+For HTTPS on port 443 later, also open **443** and use a reverse proxy (see below).
+
+### 2. SSH in and clone
+
+```bash
+ssh -i your-key.pem ubuntu@<EC2_PUBLIC_IP>
+
+sudo apt-get update && sudo apt-get install -y git
+sudo mkdir -p /opt/yolo-fastapi-mvp
+sudo chown "$USER:$USER" /opt/yolo-fastapi-mvp
+git clone https://github.com/sidhurana/yolo-fastapi-mvp.git /opt/yolo-fastapi-mvp
+cd /opt/yolo-fastapi-mvp
+```
+
+### 3. Run the install script
+
+```bash
+chmod +x scripts/install.sh scripts/run_https.sh scripts/setup_db.py
+./scripts/install.sh
+```
+
+This installs Python deps, starts Postgres via Docker, creates the database, and downloads the plant YOLO model.
+
+### 4. Start the API
+
+**Manual (foreground):**
+
+```bash
+source .venv/bin/activate
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+**Production (systemd — survives reboot):**
+
+```bash
+sudo cp deploy/plant-inspector.service /etc/systemd/system/
+# Edit User/WorkingDirectory if not using ubuntu@/opt/yolo-fastapi-mvp
+sudo systemctl daemon-reload
+sudo systemctl enable plant-inspector
+sudo systemctl start plant-inspector
+sudo systemctl status plant-inspector
+```
+
+Ensure Docker Postgres starts on boot:
+
+```bash
+cd /opt/yolo-fastapi-mvp
+sudo systemctl enable docker
+docker compose up db -d
+```
+
+### 5. Verify
+
+```bash
+curl http://localhost:8000/health
+# {"status":"ok","database":"ok"}
+
+curl http://localhost:8000/api/v1/admin/stats
+```
+
+From your browser (replace IP):
+
+- Camera: `http://<EC2_PUBLIC_IP>:8000`
+- Admin panel: `http://<EC2_PUBLIC_IP>:8000/admin`
+
+### 6. Optional — HTTPS (live phone camera)
+
+Browsers require HTTPS for live camera on phones:
+
+```bash
+cd /opt/yolo-fastapi-mvp
+./scripts/run_https.sh
+# Open https://<EC2_PUBLIC_IP>:8000 on phone (accept cert warning)
+```
+
+For production HTTPS, put **nginx** or **Caddy** in front with Let's Encrypt:
+
+```bash
+sudo apt-get install -y nginx certbot python3-certbot-nginx
+# Point domain A-record to EC2 IP, then:
+sudo certbot --nginx -d yourdomain.com
+```
+
+Proxy `yourdomain.com` → `http://127.0.0.1:8000`.
+
+### 7. Docker Compose (all-in-one)
+
+If Docker is installed, run API + Postgres together:
+
+```bash
+cd /opt/yolo-fastapi-mvp
+docker compose up --build -d
+docker compose logs -f api
+```
+
+Mount `weights/` and `uploads/` volumes so model and scan images persist (already configured in `docker-compose.yml`).
+
+### EC2 checklist
+
+- [ ] Security group allows **8000** from your IP (or 0.0.0.0/0 for public demo)
+- [ ] `./scripts/install.sh` completed without errors
+- [ ] `curl localhost:8000/health` returns `database: ok`
+- [ ] Model downloaded: `ls -lh weights/plant_disease.pt`
+- [ ] Phone can reach `http://<PUBLIC_IP>:8000` on same network or public IP
+- [ ] (Optional) systemd service enabled for auto-start
+
+### Environment on EC2
+
+Edit `/opt/yolo-fastapi-mvp/.env`:
+
+```env
+MODEL_PRESET=plant_disease
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/plant_inspector
+STORE_EVENT_IMAGES=true
+# DEVICE=cpu
+```
+
+When using `docker compose`, Postgres host is `db` not `localhost`:
+
+```env
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/plant_inspector
+```
 
 ---
 
@@ -403,6 +628,9 @@ All settings live in `.env` (see `.env.example`).
 | `RETURN_ANNOTATED_IMAGE` | `true` | Include base64 JPEG with boxes in API response |
 | `MAX_UPLOAD_BYTES` | `10485760` | Max upload size (10 MB) |
 | `CORS_ORIGINS` | `*` | Allowed CORS origins |
+| `DATABASE_URL` | `postgresql+psycopg2://...` | PostgreSQL connection string |
+| `STORE_EVENT_IMAGES` | `true` | Save annotated JPEGs to disk |
+| `UPLOADS_DIR` | `uploads` | Directory for event images |
 
 Preset values are merged first; any variable you set in `.env` overrides the preset.
 
@@ -491,13 +719,24 @@ yolo-fastapi-mvp/
 │   ├── model_loader.py      # HF download + local weight cache
 │   ├── models_registry.py   # Preset definitions
 │   ├── config.py            # Environment settings
+│   ├── database.py          # PostgreSQL models + session
+│   ├── event_service.py     # Persist & query detection events
+│   ├── advisory.py          # Disease notes & suggestions
+│   ├── serializers.py       # DB → API mapping
 │   └── schemas.py           # Pydantic API models
 ├── static/
-│   └── camera.html          # Mobile web UI (no build step)
+│   ├── camera.html          # Mobile web UI
+│   └── admin.html           # Admin dashboard
 ├── scripts/
+│   ├── install.sh           # One-shot Ubuntu/EC2 setup
+│   ├── setup_db.py          # Create Postgres DB + tables
 │   ├── download_model.py    # Pre-download weights
 │   └── run_https.sh         # HTTPS dev server for live camera
+├── deploy/
+│   └── plant-inspector.service  # systemd unit example
+├── docker-compose.yml
 ├── weights/                 # Cached .pt files (gitignored)
+├── uploads/events/          # Annotated scan images (gitignored)
 ├── .env.example
 ├── requirements.txt
 ├── Dockerfile
@@ -528,6 +767,7 @@ For HTTPS in Docker, terminate TLS with a reverse proxy (nginx, Caddy) or mount 
 |---------|-------|-----|
 | `FileNotFoundError: hf:/...` | Ultralytics does not support `hf://` URLs | Use local path `weights/plant_disease.pt`; run `download_model.py` |
 | Model download 404 | Wrong HF filename | Plant model file is `PlantDiseaseDetection.pt`, not `best.pt` — already handled in `model_loader.py` |
+| `database "plant_inspector" does not exist` | DB not created | Run `python scripts/setup_db.py` (auto-created on startup since v0.3) |
 | Live camera blocked | HTTP on phone | Use `./scripts/run_https.sh` and open `https://` URL |
 | "Take photo" does nothing | In-app browser (Instagram, etc.) | Open in Safari or Chrome |
 | No detections | Wrong crop, bad lighting, or confidence too high | Lower `CONFIDENCE_THRESHOLD`; frame the leaf closer |
